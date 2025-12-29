@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- WMS to ERP: Shipment Confirmations Flow -->
+	<!-- This flow receives shipment confirmations from WMS and forwards them to ERP -->
+	
+	<flow name="post:\\shipment-confirmations:application\\json:wms-erp-api-config" doc:name="POST Shipment Confirmations">
+		<logger level="INFO" doc:name="Log Request Start" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, action: 'START', shipmentId: payload.shipmentId default 'N/A', poNumber: payload.poNumber default 'N/A', timestamp: now()}]"/>
+		
+		<!-- Store original payload -->
+		<set-variable variableName="originalPayload" value="#[payload]" doc:name="Store Original Payload"/>
+		
+		<!-- Generate Idempotency Key for Shipment -->
+		<set-variable variableName="idempotencyKey" value="#['SHIP-' ++ (payload.shipmentId default '')]" doc:name="Generate Idempotency Key"/>
+		
+		<!-- Idempotency Check -->
+		<idempotent-message-validator idExpression="#[vars.idempotencyKey]" objectStore="Idempotency_Object_Store" doc:name="Idempotency Check"/>
+		
+		<!-- Validate Shipment Confirmation -->
+		<flow-ref name="validate-shipment-confirmation-subflow" doc:name="Validate Shipment Confirmation"/>
+		
+		<!-- Transform to ERP Format -->
+		<flow-ref name="transform-shipment-to-erp-subflow" doc:name="Transform to ERP Format"/>
+		
+		<!-- Send to ERP with Retry -->
+		<flow-ref name="send-to-erp-subflow" doc:name="Send to ERP"/>
+		
+		<!-- Build Success Response -->
+		<set-variable variableName="httpStatus" value="200" doc:name="Set HTTP Status 200"/>
+		<ee:transform doc:name="Build Success Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: true,
+	message: "Shipment confirmation successfully processed",
+	referenceId: vars.originalPayload.shipmentId
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<logger level="INFO" doc:name="Log Request End" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, action: 'END', shipmentId: vars.originalPayload.shipmentId, poNumber: vars.originalPayload.poNumber, status: 'SUCCESS', timestamp: now()}]"/>
+		
+		<error-handler ref="Global_Error_Handler"/>
+	</flow>
+
+</mule>

@@ -1,0 +1,17 @@
+{
+  "minMuleVersion": "4.9.3",
+  "javaSpecificationVersions": ["17"],
+  "secureProperties": [
+    "secure.key",
+    "erp.credentials.clientId",
+    "erp.credentials.clientSecret",
+    "erp.credentials.username",
+    "erp.credentials.password",
+    "wms.credentials.clientId",
+    "wms.credentials.clientSecret",
+    "wms.credentials.apiKey",
+    "tls.keystore.password",
+    "tls.keystore.keyPassword",
+    "tls.truststore.password"
+  ]
+}

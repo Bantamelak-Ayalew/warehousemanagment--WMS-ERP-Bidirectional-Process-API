@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="inventory-updates-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- Test: Successful Inventory Update Processing -->
+	<munit:test name="test-inventory-update-success" doc:name="Test Inventory Update Success" description="Verify successful inventory update processing">
+		<munit:behavior>
+			<!-- Mock ERP HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "success", "erpTransactionId": "ERP-INV-12345"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock Idempotency Check -->
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"warehouseId": "WH-001", "sku": "SKU-001", "quantityAvailable": 500, "quantityReserved": 50, "lastUpdated": "2024-01-15T10:30:00Z"}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<flow-ref name="post:\\inventory-updates:application\\json:wms-erp-api-config" doc:name="Call Inventory Updates Flow"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Success True"/>
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" doc:name="Assert HTTP Status 200"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Inventory Update Validation Failure - Missing Warehouse ID -->
+	<munit:test name="test-inventory-update-validation-missing-warehouse" doc:name="Test Inventory Validation - Missing Warehouse" description="Verify validation fails when warehouse ID is missing" expectedErrorType="APP:VALIDATION_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"sku": "SKU-001", "quantityAvailable": 500, "quantityReserved": 50, "lastUpdated": "2024-01-15T10:30:00Z"}]' doc:name="Set Test Payload Without Warehouse" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['INV--SKU-001-2024-01-15T10:30:00Z']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\inventory-updates:application\\json:wms-erp-api-config" doc:name="Call Inventory Updates Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: Inventory Update Validation Failure - Negative Quantity -->
+	<munit:test name="test-inventory-update-validation-negative-quantity" doc:name="Test Inventory Validation - Negative Quantity" description="Verify validation fails when quantity is negative" expectedErrorType="APP:VALIDATION_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"warehouseId": "WH-001", "sku": "SKU-001", "quantityAvailable": -10, "quantityReserved": 50, "lastUpdated": "2024-01-15T10:30:00Z"}]' doc:name="Set Test Payload With Negative Quantity" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['INV-WH-001-SKU-001-2024-01-15T10:30:00Z']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\inventory-updates:application\\json:wms-erp-api-config" doc:name="Call Inventory Updates Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: Inventory Update Duplicate Detection -->
+	<munit:test name="test-inventory-update-duplicate" doc:name="Test Inventory Duplicate Detection" description="Verify duplicate inventory update is rejected" expectedErrorType="MULE:DUPLICATE_MESSAGE">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check - Duplicate">
+				<munit-tools:then-raise-error typeId="MULE:DUPLICATE_MESSAGE"/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"warehouseId": "WH-001", "sku": "SKU-001", "quantityAvailable": 500, "quantityReserved": 50, "lastUpdated": "2024-01-15T10:30:00Z"}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['INV-WH-001-SKU-001-2024-01-15T10:30:00Z']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\inventory-updates:application\\json:wms-erp-api-config" doc:name="Call Inventory Updates Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: ERP System Timeout -->
+	<munit:test name="test-inventory-update-erp-timeout" doc:name="Test ERP Timeout" description="Verify proper handling of ERP timeout" expectedErrorType="HTTP:TIMEOUT">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+			
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request - Timeout">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-raise-error typeId="HTTP:TIMEOUT"/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"warehouseId": "WH-001", "sku": "SKU-001", "quantityAvailable": 500, "quantityReserved": 50, "lastUpdated": "2024-01-15T10:30:00Z"}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['INV-WH-001-SKU-001-2024-01-15T10:30:00Z']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\inventory-updates:application\\json:wms-erp-api-config" doc:name="Call Inventory Updates Flow"/>
+		</munit:execution>
+	</munit:test>
+
+</mule>

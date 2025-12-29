@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <!-- WMS-ERP API Test Logging Configuration -->
+    <Properties>
+        <Property name="CONSOLE_PATTERN">%-5p %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] [correlationId: %X{correlationId}] %c: %m%n</Property>
+    </Properties>
+    
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${CONSOLE_PATTERN}"/>
+        </Console>
+    </Appenders>
+    
+    <Loggers>
+        <!-- Reduce noise from HTTP and other connectors during tests -->
+        <AsyncLogger name="org.mule.service.http" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.extension.http" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.module.apikit" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.extension.objectstore" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        
+        <!-- Reduce startup noise -->
+        <AsyncLogger name="com.mulesoft.mule.runtime.plugin" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.maven.client" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.runtime.core.internal.util" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.quartz" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.munit.plugins.coverage.server" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        
+        <!-- MUnit specific loggers -->
+        <AsyncLogger name="com.mulesoft.munit" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        
+        <!-- Application logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+</Configuration>

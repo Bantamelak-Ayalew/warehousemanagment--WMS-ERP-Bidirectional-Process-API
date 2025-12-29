@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration status="WARN">
+
+    <!-- WMS-ERP Bidirectional Process API - Logging Configuration -->
+    <!-- Structured JSON logging for enterprise observability -->
+
+    <Properties>
+        <Property name="APP_NAME">wms-erp-api</Property>
+        <Property name="LOG_DIR">${sys:mule.home}${sys:file.separator}logs</Property>
+        <Property name="JSON_PATTERN">{"timestamp":"%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ}","level":"%-5p","correlationId":"%X{correlationId}","processor":"%X{processorPath}","thread":"%t","logger":"%c","message":"%enc{%m}{JSON}"}%n</Property>
+        <Property name="CONSOLE_PATTERN">%-5p %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] [correlationId: %X{correlationId}] %c: %m%n</Property>
+    </Properties>
+
+    <Appenders>
+        <!-- Main Application Log - JSON Format -->
+        <RollingFile name="ApplicationLog" 
+                     fileName="${LOG_DIR}${sys:file.separator}${APP_NAME}.log"
+                     filePattern="${LOG_DIR}${sys:file.separator}${APP_NAME}-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${JSON_PATTERN}"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <!-- Error Log - Separate file for errors -->
+        <RollingFile name="ErrorLog" 
+                     fileName="${LOG_DIR}${sys:file.separator}${APP_NAME}-error.log"
+                     filePattern="${LOG_DIR}${sys:file.separator}${APP_NAME}-error-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${JSON_PATTERN}"/>
+            <Filters>
+                <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <!-- Console Appender -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${CONSOLE_PATTERN}"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- HTTP Service Loggers -->
+        <AsyncLogger name="org.mule.service.http" level="WARN" additivity="false">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+        <AsyncLogger name="org.mule.extension.http" level="WARN" additivity="false">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- APIKit Logger -->
+        <AsyncLogger name="org.mule.module.apikit" level="WARN" additivity="false">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- Batch Processing Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.strategy" level="WARN" additivity="false">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- ObjectStore Logger -->
+        <AsyncLogger name="org.mule.extension.objectstore" level="WARN" additivity="false">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- Application Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO" additivity="false">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="ErrorLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- Root Logger -->
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="ApplicationLog"/>
+            <AppenderRef ref="ErrorLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

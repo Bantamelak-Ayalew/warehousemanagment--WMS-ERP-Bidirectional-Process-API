@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Global Error Handler for Enterprise-Grade Error Management -->
+	<error-handler name="Global_Error_Handler" doc:name="Global Error Handler">
+		
+		<!-- Validation Errors - 400 Bad Request -->
+		<on-error-propagate type="APIKIT:BAD_REQUEST" logException="true" doc:name="On Error Propagate - Bad Request">
+			<set-variable variableName="httpStatus" value="400" doc:name="Set HTTP Status 400"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Bad Request: " ++ (error.description default "Invalid request format"),
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "VALIDATION_ERROR"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="ERROR" doc:name="Log Validation Error" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'VALIDATION_ERROR', errorDescription: error.description, timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Resource Not Found - 404 -->
+		<on-error-propagate type="APIKIT:NOT_FOUND" logException="true" doc:name="On Error Propagate - Not Found">
+			<set-variable variableName="httpStatus" value="404" doc:name="Set HTTP Status 404"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Resource not found",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "NOT_FOUND"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="WARN" doc:name="Log Not Found" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'NOT_FOUND', timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Method Not Allowed - 405 -->
+		<on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED" logException="true" doc:name="On Error Propagate - Method Not Allowed">
+			<set-variable variableName="httpStatus" value="405" doc:name="Set HTTP Status 405"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Method not allowed",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "METHOD_NOT_ALLOWED"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="WARN" doc:name="Log Method Not Allowed" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'METHOD_NOT_ALLOWED', timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Unsupported Media Type - 415 -->
+		<on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE" logException="true" doc:name="On Error Propagate - Unsupported Media Type">
+			<set-variable variableName="httpStatus" value="415" doc:name="Set HTTP Status 415"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Unsupported media type",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "UNSUPPORTED_MEDIA_TYPE"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="WARN" doc:name="Log Unsupported Media Type" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'UNSUPPORTED_MEDIA_TYPE', timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Duplicate Message / Idempotency Violation - 409 Conflict -->
+		<on-error-propagate type="MULE:DUPLICATE_MESSAGE" logException="true" doc:name="On Error Propagate - Duplicate Message">
+			<set-variable variableName="httpStatus" value="409" doc:name="Set HTTP Status 409"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Duplicate request detected. This message has already been processed.",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "DUPLICATE_MESSAGE"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="WARN" doc:name="Log Duplicate Message" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'DUPLICATE_MESSAGE', timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Connectivity Errors - 503 Service Unavailable (Retryable) -->
+		<on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT, MULE:CONNECTIVITY" logException="true" doc:name="On Error Propagate - Connectivity">
+			<set-variable variableName="httpStatus" value="503" doc:name="Set HTTP Status 503"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Service temporarily unavailable. Please retry later.",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "CONNECTIVITY_ERROR",
+	retryable: true
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="ERROR" doc:name="Log Connectivity Error" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'CONNECTIVITY_ERROR', errorDescription: error.description, retryable: true, timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Downstream System Errors - 502 Bad Gateway -->
+		<on-error-propagate type="HTTP:BAD_REQUEST, HTTP:UNAUTHORIZED, HTTP:FORBIDDEN, HTTP:NOT_FOUND, HTTP:INTERNAL_SERVER_ERROR, HTTP:SERVICE_UNAVAILABLE" logException="true" doc:name="On Error Propagate - Downstream Error">
+			<set-variable variableName="httpStatus" value="502" doc:name="Set HTTP Status 502"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Downstream system error",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "DOWNSTREAM_ERROR",
+	retryable: (error.errorType.identifier contains "TIMEOUT") or (error.errorType.identifier contains "SERVICE_UNAVAILABLE")
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="ERROR" doc:name="Log Downstream Error" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'DOWNSTREAM_ERROR', errorDescription: error.description, timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Transformation Errors - 500 Internal Server Error -->
+		<on-error-propagate type="MULE:EXPRESSION, MULE:TRANSFORMATION" logException="true" doc:name="On Error Propagate - Transformation">
+			<set-variable variableName="httpStatus" value="500" doc:name="Set HTTP Status 500"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Data transformation error",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: "TRANSFORMATION_ERROR"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="ERROR" doc:name="Log Transformation Error" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: 'TRANSFORMATION_ERROR', errorDescription: error.description, timestamp: now()}]"/>
+		</on-error-propagate>
+
+		<!-- Catch-All for Any Other Errors - 500 Internal Server Error -->
+		<on-error-propagate type="ANY" logException="true" doc:name="On Error Propagate - Any">
+			<set-variable variableName="httpStatus" value="500" doc:name="Set HTTP Status 500"/>
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	success: false,
+	message: "Internal server error",
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	errorType: error.errorType.identifier default "UNKNOWN_ERROR"
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<logger level="ERROR" doc:name="Log Unknown Error" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, errorType: error.errorType.identifier, errorDescription: error.description, timestamp: now()}]"/>
+		</on-error-propagate>
+
+	</error-handler>
+
+</mule>

@@ -1,0 +1,26 @@
+# WMS-ERP Secure Configuration Properties
+# All values below should be encrypted using the secure properties tool
+# Encryption: AES/CBC with secure.key
+
+erp:
+  credentials:
+    clientId: "![encrypted-erp-client-id]"
+    clientSecret: "![encrypted-erp-client-secret]"
+    username: "![encrypted-erp-username]"
+    password: "![encrypted-erp-password]"
+
+wms:
+  credentials:
+    clientId: "![encrypted-wms-client-id]"
+    clientSecret: "![encrypted-wms-client-secret]"
+    apiKey: "![encrypted-wms-api-key]"
+
+tls:
+  keystore:
+    path: "keystore.jks"
+    password: "![encrypted-keystore-password]"
+    keyPassword: "![encrypted-key-password]"
+    alias: "wms-erp-api"
+  truststore:
+    path: "truststore.jks"
+    password: "![encrypted-truststore-password]"

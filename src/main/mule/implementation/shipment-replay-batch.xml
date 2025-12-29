@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- Shipment Replay Batch Job -->
+	<!-- Replays failed shipment confirmations to ERP -->
+
+	<flow name="shipment-replay-trigger-flow" doc:name="Shipment Replay Trigger">
+		<scheduler doc:name="Scheduler">
+			<scheduling-strategy>
+				<fixed-frequency frequency="${batch.shipmentReplay.schedulerFrequency}" timeUnit="MILLISECONDS"/>
+			</scheduling-strategy>
+		</scheduler>
+		
+		<logger level="INFO" doc:name="Log Batch Start" message="#[output application/json --- {correlationId: correlationId, action: 'SHIPMENT_REPLAY_START', timestamp: now()}]"/>
+		
+		<!-- Fetch failed shipment records from Object Store -->
+		<os:retrieve-all objectStore="Failed_Records_Object_Store" doc:name="Retrieve Failed Records" target="failedRecords"/>
+		
+		<choice doc:name="Check for Failed Records">
+			<when expression="#[sizeOf(vars.failedRecords default {}) > 0]">
+				<!-- Transform to processable collection -->
+				<ee:transform doc:name="Prepare Batch Input">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.failedRecords filterObject ((value, key) -> 
+	(key as String) startsWith "FAILED-SHIP-"
+) pluck ((value, key) -> {
+	recordKey: key as String,
+	recordData: value
+})]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+				
+				<flow-ref name="shipment-replay-batch-job" doc:name="Execute Batch Job"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="No Records" message="No failed shipment records to replay"/>
+			</otherwise>
+		</choice>
+		
+		<error-handler ref="Global_Error_Handler"/>
+	</flow>
+
+	<flow name="shipment-replay-batch-job" doc:name="Shipment Replay Batch Job">
+		<batch:job jobName="Shipment_Replay_Batch" maxFailedRecords="-1" doc:name="Shipment Replay Batch">
+			
+			<batch:process-records>
+				<!-- Step 1: Validate Retry Eligibility -->
+				<batch:step name="Validate_Retry_Step" doc:name="Validate Retry Eligibility">
+					<try doc:name="Try Validation">
+						<logger level="DEBUG" doc:name="Log Record Processing" message="#[output application/json --- {action: 'VALIDATING_RETRY', recordKey: payload.recordKey, retryCount: payload.recordData.retryCount default 0, timestamp: now()}]"/>
+						
+						<!-- Check retry count -->
+						<choice doc:name="Check Retry Limit">
+							<when expression="#[(payload.recordData.retryCount default 0) >= 5]">
+								<logger level="WARN" doc:name="Log Max Retries" message="#[output application/json --- {action: 'MAX_RETRIES_EXCEEDED', recordKey: payload.recordKey, timestamp: now()}]"/>
+								<raise-error type="APP:MAX_RETRIES" description="Maximum retry attempts exceeded"/>
+							</when>
+							<otherwise>
+								<logger level="DEBUG" doc:name="Retry Eligible" message="Record eligible for retry"/>
+							</otherwise>
+						</choice>
+						
+						<error-handler>
+							<on-error-continue type="APP:MAX_RETRIES" logException="false" doc:name="Handle Max Retries">
+								<set-variable variableName="skipRecord" value="#[true]" doc:name="Mark for Skip"/>
+							</on-error-continue>
+						</error-handler>
+					</try>
+				</batch:step>
+
+				<!-- Step 2: Replay to ERP -->
+				<batch:step name="Replay_To_ERP_Step" doc:name="Replay to ERP" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try ERP Replay">
+						<set-variable variableName="currentRecord" value="#[payload]" doc:name="Store Current Record"/>
+						
+						<!-- Prepare replay payload -->
+						<ee:transform doc:name="Prepare Replay Payload">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	erpTransactionId: "ERP-REPLAY-" ++ uuid(),
+	sourceSystem: "WMS",
+	transactionType: "SHIPMENT_REPLAY",
+	isReplay: true,
+	retryAttempt: (vars.currentRecord.recordData.retryCount default 0) + 1,
+	originalData: vars.currentRecord.recordData.record,
+	replayedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+							</ee:message>
+						</ee:transform>
+						
+						<!-- Send to ERP with retry -->
+						<until-successful maxRetries="2" millisBetweenRetries="3000" doc:name="Retry ERP Call">
+							<http:request method="POST" config-ref="HTTP_Request_Config_ERP" path="${erp.basePath}/shipments/replay" doc:name="POST to ERP">
+								<http:headers><![CDATA[#[output application/java
+---
+{
+	"Content-Type": "application/json",
+	"X-Correlation-ID": correlationId,
+	"X-Batch-Job": "SHIPMENT_REPLAY",
+	"X-Retry-Attempt": vars.currentRecord.recordData.retryCount default 0,
+	"client_id": p('secure::erp.credentials.clientId'),
+	"client_secret": p('secure::erp.credentials.clientSecret')
+}]]]></http:headers>
+							</http:request>
+						</until-successful>
+						
+						<!-- Remove from failed records on success -->
+						<os:remove key="#[vars.currentRecord.recordKey]" objectStore="Failed_Records_Object_Store" doc:name="Remove Replayed Record"/>
+						
+						<logger level="INFO" doc:name="Log Success" message="#[output application/json --- {action: 'SHIPMENT_REPLAYED', recordKey: vars.currentRecord.recordKey, timestamp: now()}]"/>
+						
+						<error-handler>
+							<on-error-continue type="ANY" logException="true" doc:name="Continue on Error">
+								<logger level="ERROR" doc:name="Log Replay Error" message="#[output application/json --- {action: 'REPLAY_FAILED', recordKey: vars.currentRecord.recordKey, error: error.description, timestamp: now()}]"/>
+								
+								<!-- Update retry count -->
+								<os:store key="#[vars.currentRecord.recordKey]" objectStore="Failed_Records_Object_Store" doc:name="Update Retry Count">
+									<os:value><![CDATA[#[output application/json --- {
+	record: vars.currentRecord.recordData.record,
+	error: error.description,
+	failedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	retryCount: (vars.currentRecord.recordData.retryCount default 0) + 1
+}]]]></os:value>
+								</os:store>
+							</on-error-continue>
+						</error-handler>
+					</try>
+				</batch:step>
+
+				<!-- Step 3: Archive Permanently Failed Records -->
+				<batch:step name="Archive_Failures_Step" doc:name="Archive Failures" acceptPolicy="ONLY_FAILURES">
+					<logger level="ERROR" doc:name="Log Permanent Failure" message="#[output application/json --- {action: 'PERMANENT_FAILURE', recordKey: payload.recordKey, timestamp: now()}]"/>
+				</batch:step>
+			</batch:process-records>
+
+			<batch:on-complete doc:name="On Complete">
+				<logger level="INFO" doc:name="Log Batch Complete" message="#[output application/json --- {action: 'SHIPMENT_REPLAY_COMPLETE', totalRecords: payload.totalRecords, successfulRecords: payload.successfulRecords, failedRecords: payload.failedRecords, processingTime: payload.elapsedTimeInMillis, timestamp: now()}]"/>
+			</batch:on-complete>
+		</batch:job>
+	</flow>
+
+</mule>

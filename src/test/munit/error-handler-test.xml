@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="error-handler-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- Test: Error Mapping Subflow -->
+	<munit:test name="test-error-mapping-validation-error" doc:name="Test Error Mapping - Validation Error" description="Verify validation error is mapped correctly">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="APP:VALIDATION_ERROR" description="Test validation error"/>
+				<error-handler>
+					<on-error-continue type="APP:VALIDATION_ERROR" doc:name="Handle Validation Error">
+						<flow-ref name="map-error-response-subflow" doc:name="Map Error Response"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Success False"/>
+			<munit-tools:assert-that expression="#[payload.errorCategory]" is="#[MunitTools::equalTo('VALIDATION')]" doc:name="Assert Error Category"/>
+			<munit-tools:assert-that expression="#[payload.httpStatus]" is="#[MunitTools::equalTo(400)]" doc:name="Assert HTTP Status 400"/>
+			<munit-tools:assert-that expression="#[payload.retryable]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Not Retryable"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Error Mapping - Connectivity Error -->
+	<munit:test name="test-error-mapping-connectivity-error" doc:name="Test Error Mapping - Connectivity Error" description="Verify connectivity error is mapped as retryable">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="HTTP:CONNECTIVITY" description="Test connectivity error"/>
+				<error-handler>
+					<on-error-continue type="HTTP:CONNECTIVITY" doc:name="Handle Connectivity Error">
+						<flow-ref name="map-error-response-subflow" doc:name="Map Error Response"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Success False"/>
+			<munit-tools:assert-that expression="#[payload.errorCategory]" is="#[MunitTools::equalTo('CONNECTIVITY')]" doc:name="Assert Error Category"/>
+			<munit-tools:assert-that expression="#[payload.httpStatus]" is="#[MunitTools::equalTo(503)]" doc:name="Assert HTTP Status 503"/>
+			<munit-tools:assert-that expression="#[payload.retryable]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Retryable"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Error Mapping - Timeout Error -->
+	<munit:test name="test-error-mapping-timeout-error" doc:name="Test Error Mapping - Timeout Error" description="Verify timeout error is mapped as retryable">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="HTTP:TIMEOUT" description="Test timeout error"/>
+				<error-handler>
+					<on-error-continue type="HTTP:TIMEOUT" doc:name="Handle Timeout Error">
+						<flow-ref name="map-error-response-subflow" doc:name="Map Error Response"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Success False"/>
+			<munit-tools:assert-that expression="#[payload.errorCategory]" is="#[MunitTools::equalTo('TIMEOUT')]" doc:name="Assert Error Category"/>
+			<munit-tools:assert-that expression="#[payload.httpStatus]" is="#[MunitTools::equalTo(504)]" doc:name="Assert HTTP Status 504"/>
+			<munit-tools:assert-that expression="#[payload.retryable]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Retryable"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Error Mapping - Duplicate Message -->
+	<munit:test name="test-error-mapping-duplicate-message" doc:name="Test Error Mapping - Duplicate Message" description="Verify duplicate message error is mapped correctly">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="APP:DUPLICATE_MESSAGE" description="Test duplicate message"/>
+				<error-handler>
+					<on-error-continue type="APP:DUPLICATE_MESSAGE" doc:name="Handle Duplicate Error">
+						<flow-ref name="map-error-response-subflow" doc:name="Map Error Response"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Success False"/>
+			<munit-tools:assert-that expression="#[payload.errorCategory]" is="#[MunitTools::equalTo('DUPLICATE')]" doc:name="Assert Error Category"/>
+			<munit-tools:assert-that expression="#[payload.httpStatus]" is="#[MunitTools::equalTo(409)]" doc:name="Assert HTTP Status 409"/>
+			<munit-tools:assert-that expression="#[payload.retryable]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Not Retryable"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Error Mapping - Transformation Error -->
+	<munit:test name="test-error-mapping-transformation-error" doc:name="Test Error Mapping - Transformation Error" description="Verify transformation error is mapped correctly">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="MULE:TRANSFORMATION" description="Test transformation error"/>
+				<error-handler>
+					<on-error-continue type="MULE:TRANSFORMATION" doc:name="Handle Transformation Error">
+						<flow-ref name="map-error-response-subflow" doc:name="Map Error Response"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Success False"/>
+			<munit-tools:assert-that expression="#[payload.errorCategory]" is="#[MunitTools::equalTo('TRANSFORMATION')]" doc:name="Assert Error Category"/>
+			<munit-tools:assert-that expression="#[payload.httpStatus]" is="#[MunitTools::equalTo(500)]" doc:name="Assert HTTP Status 500"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Retryable Error Check -->
+	<munit:test name="test-check-retryable-error" doc:name="Test Check Retryable Error" description="Verify retryable error detection">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="HTTP:CONNECTIVITY" description="Test connectivity error"/>
+				<error-handler>
+					<on-error-continue type="HTTP:CONNECTIVITY" doc:name="Handle Error">
+						<flow-ref name="check-retryable-error-subflow" doc:name="Check Retryable"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[vars.isRetryable]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Is Retryable"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Non-Retryable Error Check -->
+	<munit:test name="test-check-non-retryable-error" doc:name="Test Check Non-Retryable Error" description="Verify non-retryable error detection">
+		<munit:execution>
+			<try doc:name="Try Block">
+				<raise-error type="HTTP:UNAUTHORIZED" description="Test unauthorized error"/>
+				<error-handler>
+					<on-error-continue type="HTTP:UNAUTHORIZED" doc:name="Handle Error">
+						<flow-ref name="check-retryable-error-subflow" doc:name="Check Retryable"/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[vars.isRetryable]" is="#[MunitTools::equalTo(false)]" doc:name="Assert Not Retryable"/>
+		</munit:validation>
+	</munit:test>
+
+</mule>

@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- Inventory Reconciliation Batch Job -->
+	<!-- Processes inventory discrepancies between WMS and ERP -->
+
+	<flow name="inventory-reconciliation-trigger-flow" doc:name="Inventory Reconciliation Trigger">
+		<scheduler doc:name="Scheduler">
+			<scheduling-strategy>
+				<fixed-frequency frequency="${batch.inventoryReconciliation.schedulerFrequency}" timeUnit="MILLISECONDS"/>
+			</scheduling-strategy>
+		</scheduler>
+		
+		<logger level="INFO" doc:name="Log Batch Start" message="#[output application/json --- {correlationId: correlationId, action: 'INVENTORY_RECONCILIATION_START', timestamp: now()}]"/>
+		
+		<!-- Fetch pending inventory records from Object Store -->
+		<os:retrieve-all objectStore="Batch_Object_Store" doc:name="Retrieve Pending Records" target="pendingRecords"/>
+		
+		<choice doc:name="Check for Pending Records">
+			<when expression="#[sizeOf(vars.pendingRecords default {}) > 0]">
+				<!-- Transform to processable collection -->
+				<ee:transform doc:name="Prepare Batch Input">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.pendingRecords filterObject ((value, key) -> 
+	(key as String) startsWith "INV-"
+) pluck ((value, key) -> {
+	recordKey: key as String,
+	recordData: value
+})]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+				
+				<flow-ref name="inventory-reconciliation-batch-job" doc:name="Execute Batch Job"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="No Records" message="No pending inventory records to process"/>
+			</otherwise>
+		</choice>
+		
+		<error-handler ref="Global_Error_Handler"/>
+	</flow>
+
+	<flow name="inventory-reconciliation-batch-job" doc:name="Inventory Reconciliation Batch Job">
+		<batch:job jobName="Inventory_Reconciliation_Batch" maxFailedRecords="-1" doc:name="Inventory Reconciliation Batch">
+			
+			<batch:process-records>
+				<!-- Step 1: Validate and Transform Records -->
+				<batch:step name="Validate_Transform_Step" doc:name="Validate and Transform">
+					<try doc:name="Try Validation">
+						<logger level="DEBUG" doc:name="Log Record Processing" message="#[output application/json --- {action: 'PROCESSING_RECORD', recordKey: payload.recordKey, timestamp: now()}]"/>
+						
+						<!-- Transform to ERP format -->
+						<ee:transform doc:name="Transform to ERP Format">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	erpTransactionId: "ERP-RECON-" ++ uuid(),
+	sourceSystem: "WMS",
+	transactionType: "INVENTORY_RECONCILIATION",
+	recordKey: payload.recordKey,
+	inventoryData: payload.recordData,
+	processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+							</ee:message>
+						</ee:transform>
+						
+						<error-handler>
+							<on-error-continue type="ANY" logException="true" doc:name="Continue on Error">
+								<logger level="ERROR" doc:name="Log Validation Error" message="#[output application/json --- {action: 'VALIDATION_FAILED', recordKey: payload.recordKey, error: error.description, timestamp: now()}]"/>
+							</on-error-continue>
+						</error-handler>
+					</try>
+				</batch:step>
+
+				<!-- Step 2: Send to ERP -->
+				<batch:step name="Send_To_ERP_Step" doc:name="Send to ERP" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try ERP Call">
+						<set-variable variableName="currentRecord" value="#[payload]" doc:name="Store Current Record"/>
+						
+						<!-- Send to ERP with retry -->
+						<until-successful maxRetries="3" millisBetweenRetries="2000" doc:name="Retry ERP Call">
+							<http:request method="POST" config-ref="HTTP_Request_Config_ERP" path="${erp.basePath}/inventory/reconciliation" doc:name="POST to ERP">
+								<http:headers><![CDATA[#[output application/java
+---
+{
+	"Content-Type": "application/json",
+	"X-Correlation-ID": correlationId,
+	"X-Batch-Job": "INVENTORY_RECONCILIATION",
+	"client_id": p('secure::erp.credentials.clientId'),
+	"client_secret": p('secure::erp.credentials.clientSecret')
+}]]]></http:headers>
+							</http:request>
+						</until-successful>
+						
+						<!-- Remove from pending on success -->
+						<os:remove key="#[vars.currentRecord.recordKey]" objectStore="Batch_Object_Store" doc:name="Remove Processed Record"/>
+						
+						<logger level="DEBUG" doc:name="Log Success" message="#[output application/json --- {action: 'RECORD_PROCESSED', recordKey: vars.currentRecord.recordKey, timestamp: now()}]"/>
+						
+						<error-handler>
+							<on-error-continue type="ANY" logException="true" doc:name="Continue on Error">
+								<logger level="ERROR" doc:name="Log ERP Error" message="#[output application/json --- {action: 'ERP_CALL_FAILED', recordKey: vars.currentRecord.recordKey, error: error.description, timestamp: now()}]"/>
+								
+								<!-- Store in failed records for retry -->
+								<os:store key="#['FAILED-' ++ vars.currentRecord.recordKey]" objectStore="Failed_Records_Object_Store" doc:name="Store Failed Record">
+									<os:value><![CDATA[#[output application/json --- {
+	record: vars.currentRecord,
+	error: error.description,
+	failedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	retryCount: 1
+}]]]></os:value>
+								</os:store>
+							</on-error-continue>
+						</error-handler>
+					</try>
+				</batch:step>
+
+				<!-- Step 3: Handle Failed Records -->
+				<batch:step name="Handle_Failures_Step" doc:name="Handle Failures" acceptPolicy="ONLY_FAILURES">
+					<logger level="WARN" doc:name="Log Failed Record" message="#[output application/json --- {action: 'RECORD_FAILED', recordKey: payload.recordKey, timestamp: now()}]"/>
+					
+					<!-- Store failed record for later retry -->
+					<os:store key="#['FAILED-' ++ payload.recordKey]" objectStore="Failed_Records_Object_Store" doc:name="Store Failed Record">
+						<os:value><![CDATA[#[output application/json --- {
+	record: payload,
+	failedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	retryCount: 0
+}]]]></os:value>
+					</os:store>
+				</batch:step>
+			</batch:process-records>
+
+			<batch:on-complete doc:name="On Complete">
+				<logger level="INFO" doc:name="Log Batch Complete" message="#[output application/json --- {action: 'INVENTORY_RECONCILIATION_COMPLETE', totalRecords: payload.totalRecords, successfulRecords: payload.successfulRecords, failedRecords: payload.failedRecords, processingTime: payload.elapsedTimeInMillis, timestamp: now()}]"/>
+			</batch:on-complete>
+		</batch:job>
+	</flow>
+
+</mule>

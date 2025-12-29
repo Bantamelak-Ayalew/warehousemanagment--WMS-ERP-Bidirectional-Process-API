@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Transformation Subflows for Data Mapping Between Systems -->
+
+	<!-- Transform Purchase Order to WMS Format -->
+	<sub-flow name="transform-po-to-wms-subflow" doc:name="Transform PO to WMS Format">
+		<logger level="DEBUG" doc:name="Log Transform Start" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_PO_TO_WMS_START', timestamp: now()}]"/>
+		
+		<ee:transform doc:name="Transform to WMS Format">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	wmsOrderId: "WMS-" ++ vars.originalPayload.poNumber,
+	sourceSystem: "ERP",
+	orderType: "PURCHASE_ORDER",
+	header: {
+		purchaseOrderNumber: vars.originalPayload.poNumber,
+		vendorId: vars.originalPayload.supplierId,
+		facilityId: vars.originalPayload.warehouseId,
+		orderDate: vars.originalPayload.orderDate as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+		orderStatus: vars.originalPayload.status default "NEW",
+		expectedDeliveryDate: (vars.originalPayload.orderDate as DateTime + |P7D|) as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+	},
+	lineItems: vars.originalPayload.items map ((item, index) -> {
+		lineNumber: index + 1,
+		itemNumber: item.sku,
+		orderedQuantity: item.quantity,
+		unitOfMeasure: item.uom default "EA",
+		receivedQuantity: 0,
+		status: "PENDING"
+	}),
+	metadata: {
+		correlationId: correlationId,
+		processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+		sourceTransactionId: vars.originalPayload.poNumber
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<set-variable variableName="wmsPayload" value="#[payload]" doc:name="Store WMS Payload"/>
+		<logger level="DEBUG" doc:name="Log Transform Complete" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_PO_TO_WMS_COMPLETE', wmsOrderId: payload.wmsOrderId, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Transform Inventory Update to ERP Format -->
+	<sub-flow name="transform-inventory-to-erp-subflow" doc:name="Transform Inventory to ERP Format">
+		<logger level="DEBUG" doc:name="Log Transform Start" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_INV_TO_ERP_START', timestamp: now()}]"/>
+		
+		<ee:transform doc:name="Transform to ERP Format">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	erpTransactionId: "ERP-INV-" ++ uuid(),
+	sourceSystem: "WMS",
+	transactionType: "INVENTORY_UPDATE",
+	inventoryData: {
+		plant: vars.originalPayload.warehouseId,
+		materialNumber: vars.originalPayload.sku,
+		stockType: "UNRESTRICTED",
+		availableStock: vars.originalPayload.quantityAvailable,
+		reservedStock: vars.originalPayload.quantityReserved,
+		totalStock: vars.originalPayload.quantityAvailable + vars.originalPayload.quantityReserved,
+		lastCountDate: vars.originalPayload.lastUpdated as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+		unitOfMeasure: "EA"
+	},
+	metadata: {
+		correlationId: correlationId,
+		processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+		sourceTransactionId: vars.idempotencyKey
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<set-variable variableName="erpPayload" value="#[payload]" doc:name="Store ERP Payload"/>
+		<logger level="DEBUG" doc:name="Log Transform Complete" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_INV_TO_ERP_COMPLETE', erpTransactionId: payload.erpTransactionId, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Transform Shipment Confirmation to ERP Format -->
+	<sub-flow name="transform-shipment-to-erp-subflow" doc:name="Transform Shipment to ERP Format">
+		<logger level="DEBUG" doc:name="Log Transform Start" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_SHIP_TO_ERP_START', timestamp: now()}]"/>
+		
+		<ee:transform doc:name="Transform to ERP Format">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	erpTransactionId: "ERP-SHIP-" ++ uuid(),
+	sourceSystem: "WMS",
+	transactionType: "SHIPMENT_CONFIRMATION",
+	deliveryData: {
+		deliveryNumber: vars.originalPayload.shipmentId,
+		purchaseOrderNumber: vars.originalPayload.poNumber,
+		carrierCode: vars.originalPayload.carrier,
+		trackingNumber: vars.originalPayload.trackingNumber,
+		shipDate: vars.originalPayload.shippedDate as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+		deliveryStatus: "SHIPPED",
+		goodsMovementType: "601"
+	},
+	lineItems: vars.originalPayload.items map ((item, index) -> {
+		lineNumber: index + 1,
+		materialNumber: item.sku,
+		deliveredQuantity: item.quantityShipped,
+		unitOfMeasure: "EA",
+		movementType: "601"
+	}),
+	metadata: {
+		correlationId: correlationId,
+		processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+		sourceTransactionId: vars.originalPayload.shipmentId
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<set-variable variableName="erpPayload" value="#[payload]" doc:name="Store ERP Payload"/>
+		<logger level="DEBUG" doc:name="Log Transform Complete" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_SHIP_TO_ERP_COMPLETE', erpTransactionId: payload.erpTransactionId, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Transform Picking Status to ERP Format -->
+	<sub-flow name="transform-picking-to-erp-subflow" doc:name="Transform Picking to ERP Format">
+		<logger level="DEBUG" doc:name="Log Transform Start" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_PICK_TO_ERP_START', timestamp: now()}]"/>
+		
+		<ee:transform doc:name="Transform to ERP Format">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var statusMapping = {
+	"PENDING": "10",
+	"IN_PROGRESS": "20",
+	"COMPLETED": "30",
+	"CANCELLED": "90",
+	"ON_HOLD": "15"
+}
+---
+{
+	erpTransactionId: "ERP-PICK-" ++ uuid(),
+	sourceSystem: "WMS",
+	transactionType: "PICKING_STATUS",
+	pickingData: {
+		pickingOrderNumber: vars.originalPayload.pickId,
+		plant: vars.originalPayload.warehouseId,
+		purchaseOrderNumber: vars.originalPayload.poNumber,
+		pickingStatus: upper(vars.originalPayload.status),
+		erpStatusCode: statusMapping[upper(vars.originalPayload.status)] default "00",
+		statusUpdateTime: vars.originalPayload.updatedAt as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+		warehouseTask: "PICK"
+	},
+	metadata: {
+		correlationId: correlationId,
+		processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+		sourceTransactionId: vars.originalPayload.pickId
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<set-variable variableName="erpPayload" value="#[payload]" doc:name="Store ERP Payload"/>
+		<logger level="DEBUG" doc:name="Log Transform Complete" message="#[output application/json --- {correlationId: correlationId, action: 'TRANSFORM_PICK_TO_ERP_COMPLETE', erpTransactionId: payload.erpTransactionId, timestamp: now()}]"/>
+	</sub-flow>
+
+</mule>

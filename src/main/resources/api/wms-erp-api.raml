@@ -1,0 +1,113 @@
+#%RAML 1.0
+title: WMS-ERP Bidirectional Process API
+version: v1
+baseUri: /api/v1/wms-erp
+mediaType: application/json
+protocols: [ HTTPS ]
+
+documentation:
+  - title: Overview
+    content: |
+      Bidirectional Process API between:
+      - WMS: Manhattan / Blue Yonder
+      - ERP: SAP / Oracle
+
+      ERP → WMS:
+        - Purchase Orders
+
+      WMS → ERP:
+        - Inventory Updates
+        - Shipment Confirmations
+        - Picking Status Updates
+
+securitySchemes:
+  client_id_enforcement:
+    type: x-client-id-enforcement
+    describedBy:
+      headers:
+        client_id:
+          type: string
+          required: true
+        client_secret:
+          type: string
+          required: true
+
+securedBy: [ client_id_enforcement ]
+
+types:
+  PurchaseOrder: !include types/purchase-order.raml
+  PurchaseOrderItem:
+    type: object
+    properties:
+      sku: string
+      quantity: number
+      uom: string
+  InventoryUpdate: !include types/inventory-update.raml
+  ShipmentConfirmation: !include types/shipment-confirmation.raml
+  ShipmentItem:
+    type: object
+    properties:
+      sku: string
+      quantityShipped: number
+  PickingStatus: !include types/picking-status.raml
+  ApiResponse: !include types/api-response.raml
+
+/purchase-orders:
+  description: ERP sends purchase orders to WMS
+  post:
+    body:
+      application/json:
+        type: PurchaseOrder
+    responses:
+      201:
+        body:
+          application/json:
+            type: ApiResponse
+      400:
+        body:
+          application/json:
+            example:
+              success: false
+              message: Invalid purchase order
+      500:
+        body:
+          application/json:
+            example:
+              success: false
+              message: Internal server error
+
+/inventory-updates:
+  description: WMS sends inventory availability updates to ERP
+  post:
+    body:
+      application/json:
+        type: InventoryUpdate
+    responses:
+      200:
+        body:
+          application/json:
+            type: ApiResponse
+
+/shipment-confirmations:
+  description: WMS sends shipment confirmations to ERP
+  post:
+    body:
+      application/json:
+        type: ShipmentConfirmation
+    responses:
+      200:
+        body:
+          application/json:
+            type: ApiResponse
+
+/picking-status:
+  description: WMS sends picking status updates to ERP
+  post:
+    body:
+      application/json:
+        type: PickingStatus
+    responses:
+      200:
+        body:
+          application/json:
+            type: ApiResponse

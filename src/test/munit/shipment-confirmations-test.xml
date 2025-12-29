@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="shipment-confirmations-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- Test: Successful Shipment Confirmation Processing -->
+	<munit:test name="test-shipment-confirmation-success" doc:name="Test Shipment Confirmation Success" description="Verify successful shipment confirmation processing">
+		<munit:behavior>
+			<!-- Mock ERP HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "success", "erpDeliveryId": "ERP-DEL-12345"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock Idempotency Check -->
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"shipmentId": "SHIP-12345", "poNumber": "PO-12345", "carrier": "FEDEX", "trackingNumber": "1234567890", "shippedDate": "2024-01-15T14:30:00Z", "items": [{"sku": "SKU-001", "quantityShipped": 100}]}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['SHIP-SHIP-12345']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\shipment-confirmations:application\\json:wms-erp-api-config" doc:name="Call Shipment Confirmations Flow"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Success True"/>
+			<munit-tools:assert-that expression="#[payload.referenceId]" is="#[MunitTools::equalTo('SHIP-12345')]" doc:name="Assert Reference ID"/>
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" doc:name="Assert HTTP Status 200"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Shipment Validation Failure - Missing Shipment ID -->
+	<munit:test name="test-shipment-validation-missing-shipment-id" doc:name="Test Shipment Validation - Missing ID" description="Verify validation fails when shipment ID is missing" expectedErrorType="APP:VALIDATION_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"poNumber": "PO-12345", "carrier": "FEDEX", "trackingNumber": "1234567890", "shippedDate": "2024-01-15T14:30:00Z", "items": [{"sku": "SKU-001", "quantityShipped": 100}]}]' doc:name="Set Test Payload Without Shipment ID" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['SHIP-']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\shipment-confirmations:application\\json:wms-erp-api-config" doc:name="Call Shipment Confirmations Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: Shipment Validation Failure - Empty Items -->
+	<munit:test name="test-shipment-validation-empty-items" doc:name="Test Shipment Validation - Empty Items" description="Verify validation fails when items array is empty" expectedErrorType="APP:VALIDATION_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"shipmentId": "SHIP-12345", "poNumber": "PO-12345", "carrier": "FEDEX", "trackingNumber": "1234567890", "shippedDate": "2024-01-15T14:30:00Z", "items": []}]' doc:name="Set Test Payload With Empty Items" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['SHIP-SHIP-12345']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\shipment-confirmations:application\\json:wms-erp-api-config" doc:name="Call Shipment Confirmations Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: Shipment Duplicate Detection -->
+	<munit:test name="test-shipment-duplicate" doc:name="Test Shipment Duplicate Detection" description="Verify duplicate shipment is rejected" expectedErrorType="MULE:DUPLICATE_MESSAGE">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check - Duplicate">
+				<munit-tools:then-raise-error typeId="MULE:DUPLICATE_MESSAGE"/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"shipmentId": "SHIP-12345", "poNumber": "PO-12345", "carrier": "FEDEX", "trackingNumber": "1234567890", "shippedDate": "2024-01-15T14:30:00Z", "items": [{"sku": "SKU-001", "quantityShipped": 100}]}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['SHIP-SHIP-12345']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\shipment-confirmations:application\\json:wms-erp-api-config" doc:name="Call Shipment Confirmations Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: ERP System Error -->
+	<munit:test name="test-shipment-erp-error" doc:name="Test ERP System Error" description="Verify proper handling of ERP errors" expectedErrorType="HTTP:INTERNAL_SERVER_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+			
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request - Error">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-raise-error typeId="HTTP:INTERNAL_SERVER_ERROR"/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"shipmentId": "SHIP-12345", "poNumber": "PO-12345", "carrier": "FEDEX", "trackingNumber": "1234567890", "shippedDate": "2024-01-15T14:30:00Z", "items": [{"sku": "SKU-001", "quantityShipped": 100}]}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<set-variable variableName="idempotencyKey" value="#['SHIP-SHIP-12345']" doc:name="Set Idempotency Key"/>
+			<flow-ref name="post:\\shipment-confirmations:application\\json:wms-erp-api-config" doc:name="Call Shipment Confirmations Flow"/>
+		</munit:execution>
+	</munit:test>
+
+</mule>

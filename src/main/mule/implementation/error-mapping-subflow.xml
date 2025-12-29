@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Error Mapping Subflows for Standardized Error Responses -->
+
+	<!-- Map Error to Standard Response -->
+	<sub-flow name="map-error-response-subflow" doc:name="Map Error Response Subflow">
+		<ee:transform doc:name="Map Error to Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var errorTypeMapping = {
+	"APP:VALIDATION_ERROR": {status: 400, category: "VALIDATION"},
+	"APP:DUPLICATE_MESSAGE": {status: 409, category: "DUPLICATE"},
+	"HTTP:CONNECTIVITY": {status: 503, category: "CONNECTIVITY"},
+	"HTTP:TIMEOUT": {status: 504, category: "TIMEOUT"},
+	"HTTP:UNAUTHORIZED": {status: 401, category: "AUTHENTICATION"},
+	"HTTP:FORBIDDEN": {status: 403, category: "AUTHORIZATION"},
+	"HTTP:NOT_FOUND": {status: 404, category: "NOT_FOUND"},
+	"HTTP:BAD_REQUEST": {status: 400, category: "BAD_REQUEST"},
+	"HTTP:INTERNAL_SERVER_ERROR": {status: 502, category: "DOWNSTREAM"},
+	"MULE:EXPRESSION": {status: 500, category: "TRANSFORMATION"},
+	"MULE:TRANSFORMATION": {status: 500, category: "TRANSFORMATION"}
+}
+var errorInfo = errorTypeMapping[error.errorType.identifier] default {status: 500, category: "UNKNOWN"}
+---
+{
+	success: false,
+	message: error.description default "An unexpected error occurred",
+	errorCategory: errorInfo.category,
+	errorType: error.errorType.identifier,
+	correlationId: correlationId,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	retryable: ["CONNECTIVITY", "TIMEOUT", "DOWNSTREAM"] contains errorInfo.category,
+	httpStatus: errorInfo.status
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+output application/java
+var errorTypeMapping = {
+	"APP:VALIDATION_ERROR": 400,
+	"APP:DUPLICATE_MESSAGE": 409,
+	"HTTP:CONNECTIVITY": 503,
+	"HTTP:TIMEOUT": 504,
+	"HTTP:UNAUTHORIZED": 401,
+	"HTTP:FORBIDDEN": 403,
+	"HTTP:NOT_FOUND": 404,
+	"HTTP:BAD_REQUEST": 400,
+	"HTTP:INTERNAL_SERVER_ERROR": 502,
+	"MULE:EXPRESSION": 500,
+	"MULE:TRANSFORMATION": 500
+}
+---
+errorTypeMapping[error.errorType.identifier] default 500]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+
+	<!-- Log Error with Masked Payload -->
+	<sub-flow name="log-error-masked-subflow" doc:name="Log Error Masked Subflow">
+		<ee:transform doc:name="Prepare Masked Log">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+fun maskSensitiveFields(obj) = obj match {
+	case is Object -> obj mapObject ((value, key) -> 
+		if (["password", "secret", "token", "authorization", "client_secret", "apiKey"] contains (key as String))
+			(key): "****MASKED****"
+		else
+			(key): maskSensitiveFields(value)
+	)
+	case is Array -> obj map maskSensitiveFields($)
+	else -> obj
+}
+---
+{
+	correlationId: correlationId,
+	flowName: flow.name,
+	errorType: error.errorType.identifier,
+	errorDescription: error.description,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	payloadSnapshot: maskSensitiveFields(vars.originalPayload default {})
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="ERROR" doc:name="Log Masked Error" message="#[payload]"/>
+	</sub-flow>
+
+	<!-- Determine if Error is Retryable -->
+	<sub-flow name="check-retryable-error-subflow" doc:name="Check Retryable Error Subflow">
+		<set-variable variableName="isRetryable" doc:name="Set Retryable Flag" value="#[['HTTP:CONNECTIVITY', 'HTTP:TIMEOUT', 'HTTP:SERVICE_UNAVAILABLE', 'MULE:CONNECTIVITY'] contains error.errorType.identifier]"/>
+		<logger level="DEBUG" doc:name="Log Retryable Status" message="#[output application/json --- {correlationId: correlationId, errorType: error.errorType.identifier, isRetryable: vars.isRetryable, timestamp: now()}]"/>
+	</sub-flow>
+
+</mule>

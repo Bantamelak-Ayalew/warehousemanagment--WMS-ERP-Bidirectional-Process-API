@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- WMS-ERP Bidirectional Process API - Main Router -->
+
+	<!-- Main API Flow -->
+	<flow name="wms-erp-api-main" doc:name="WMS-ERP API Main">
+		<http:listener config-ref="HTTP_Listener_Config" path="${http.listener.basePath}/*" doc:name="HTTP Listener">
+			<http:response statusCode="#[vars.httpStatus default 200]">
+				<http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+			</http:response>
+			<http:error-response statusCode="#[vars.httpStatus default 500]">
+				<http:body><![CDATA[#[payload]]]></http:body>
+				<http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+			</http:error-response>
+		</http:listener>
+		
+		<!-- Log incoming request -->
+		<logger level="INFO" doc:name="Log Request Start" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, action: 'REQUEST_RECEIVED', method: attributes.method, path: attributes.requestPath, clientId: attributes.headers.'client_id' default 'N/A', timestamp: now()}]"/>
+		
+		<!-- Validate Client Credentials (Client ID Enforcement Compatible) -->
+		<flow-ref name="validate-client-credentials-subflow" doc:name="Validate Client Credentials"/>
+		
+		<!-- APIKit Router -->
+		<apikit:router config-ref="wms-erp-api-config" doc:name="APIKit Router"/>
+		
+		<!-- Log response -->
+		<logger level="INFO" doc:name="Log Request End" message="#[output application/json --- {correlationId: correlationId, flowName: flow.name, action: 'REQUEST_COMPLETED', httpStatus: vars.httpStatus default 200, timestamp: now()}]"/>
+		
+		<error-handler ref="Global_Error_Handler"/>
+	</flow>
+
+	<!-- API Console Flow -->
+
+	<!-- Client Credentials Validation Subflow -->
+	<sub-flow name="validate-client-credentials-subflow" doc:name="Validate Client Credentials">
+		<choice doc:name="Check Client Credentials">
+			<when expression="#[isEmpty(attributes.headers.'client_id') or isEmpty(attributes.headers.'client_secret')]">
+				<logger level="WARN" doc:name="Log Missing Credentials" message="#[output application/json --- {correlationId: correlationId, action: 'MISSING_CREDENTIALS', timestamp: now()}]"/>
+				<set-variable variableName="httpStatus" value="401" doc:name="Set HTTP Status 401"/>
+				<raise-error type="APP:UNAUTHORIZED" description="Missing client credentials. Both client_id and client_secret headers are required."/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Credentials Present" message="#[output application/json --- {correlationId: correlationId, action: 'CREDENTIALS_VALIDATED', clientId: attributes.headers.'client_id', timestamp: now()}]"/>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+</mule>

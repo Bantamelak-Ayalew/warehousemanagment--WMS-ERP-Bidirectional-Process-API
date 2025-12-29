@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="purchase-orders-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- Test: Successful Purchase Order Processing -->
+	<munit:test name="test-purchase-order-success" doc:name="Test Purchase Order Success" description="Verify successful purchase order processing">
+		<munit:behavior>
+			<!-- Mock WMS HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock WMS Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_WMS"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "success", "wmsOrderId": "WMS-PO-12345"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock Object Store -->
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"poNumber": "PO-12345", "supplierId": "SUP-001", "warehouseId": "WH-001", "orderDate": "2024-01-15T10:30:00Z", "status": "NEW", "items": [{"sku": "SKU-001", "quantity": 100, "uom": "EA"}]}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<flow-ref name="post:\\purchase-orders:application\\json:wms-erp-api-config" doc:name="Call Purchase Orders Flow"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Success True"/>
+			<munit-tools:assert-that expression="#[payload.referenceId]" is="#[MunitTools::equalTo('PO-12345')]" doc:name="Assert Reference ID"/>
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('201')]" doc:name="Assert HTTP Status 201"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Purchase Order Validation Failure - Missing PO Number -->
+	<munit:test name="test-purchase-order-validation-missing-po-number" doc:name="Test PO Validation - Missing PO Number" description="Verify validation fails when PO number is missing" expectedErrorType="APP:VALIDATION_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"supplierId": "SUP-001", "warehouseId": "WH-001", "orderDate": "2024-01-15T10:30:00Z", "status": "NEW", "items": [{"sku": "SKU-001", "quantity": 100, "uom": "EA"}]}]' doc:name="Set Test Payload Without PO Number" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<flow-ref name="post:\\purchase-orders:application\\json:wms-erp-api-config" doc:name="Call Purchase Orders Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: Purchase Order Validation Failure - Empty Items -->
+	<munit:test name="test-purchase-order-validation-empty-items" doc:name="Test PO Validation - Empty Items" description="Verify validation fails when items array is empty" expectedErrorType="APP:VALIDATION_ERROR">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"poNumber": "PO-12345", "supplierId": "SUP-001", "warehouseId": "WH-001", "orderDate": "2024-01-15T10:30:00Z", "status": "NEW", "items": []}]' doc:name="Set Test Payload With Empty Items" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<flow-ref name="post:\\purchase-orders:application\\json:wms-erp-api-config" doc:name="Call Purchase Orders Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: Purchase Order Duplicate Detection -->
+	<munit:test name="test-purchase-order-duplicate" doc:name="Test PO Duplicate Detection" description="Verify duplicate purchase order is rejected" expectedErrorType="MULE:DUPLICATE_MESSAGE">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check - Duplicate">
+				<munit-tools:then-raise-error typeId="MULE:DUPLICATE_MESSAGE"/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"poNumber": "PO-12345", "supplierId": "SUP-001", "warehouseId": "WH-001", "orderDate": "2024-01-15T10:30:00Z", "status": "NEW", "items": [{"sku": "SKU-001", "quantity": 100, "uom": "EA"}]}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<flow-ref name="post:\\purchase-orders:application\\json:wms-erp-api-config" doc:name="Call Purchase Orders Flow"/>
+		</munit:execution>
+	</munit:test>
+
+	<!-- Test: WMS System Connectivity Failure -->
+	<munit:test name="test-purchase-order-wms-connectivity-failure" doc:name="Test WMS Connectivity Failure" description="Verify proper handling of WMS connectivity issues" expectedErrorType="HTTP:CONNECTIVITY">
+		<munit:behavior>
+			<munit-tools:mock-when processor="idempotent-message-validator" doc:name="Mock Idempotency Check">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+			
+			<munit-tools:mock-when processor="http:request" doc:name="Mock WMS Request - Connectivity Error">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_WMS"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-raise-error typeId="HTTP:CONNECTIVITY"/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value='#[{"poNumber": "PO-12345", "supplierId": "SUP-001", "warehouseId": "WH-001", "orderDate": "2024-01-15T10:30:00Z", "status": "NEW", "items": [{"sku": "SKU-001", "quantity": 100, "uom": "EA"}]}]' doc:name="Set Test Payload" mimeType="application/json"/>
+			<set-variable variableName="originalPayload" value="#[payload]" doc:name="Set Original Payload"/>
+			<flow-ref name="post:\\purchase-orders:application\\json:wms-erp-api-config" doc:name="Call Purchase Orders Flow"/>
+		</munit:execution>
+	</munit:test>
+
+</mule>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Idempotency Subflows for Duplicate Detection and Exactly-Once Processing -->
+
+	<!-- Idempotency Check for Purchase Orders -->
+	<sub-flow name="idempotency-check-subflow" doc:name="Idempotency Check Subflow">
+		<logger level="DEBUG" doc:name="Log Idempotency Check Start" message="#[output application/json --- {correlationId: correlationId, action: 'IDEMPOTENCY_CHECK_START', poNumber: payload.poNumber, timestamp: now()}]"/>
+		
+		<!-- Generate Idempotency Key -->
+		<set-variable variableName="idempotencyKey" value="#['PO-' ++ (payload.poNumber default '')]" doc:name="Generate Idempotency Key"/>
+		
+		<!-- Check if message already processed -->
+		<idempotent-message-validator idExpression="#[vars.idempotencyKey]" objectStore="Idempotency_Object_Store" doc:name="Idempotency Validator"/>
+		
+		<logger level="DEBUG" doc:name="Log Idempotency Check Passed" message="#[output application/json --- {correlationId: correlationId, action: 'IDEMPOTENCY_CHECK_PASSED', idempotencyKey: vars.idempotencyKey, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Store Processed Message ID -->
+	<sub-flow name="store-processed-message-subflow" doc:name="Store Processed Message Subflow">
+		<os:store key="#[vars.idempotencyKey]" objectStore="Idempotency_Object_Store" doc:name="Store Message ID">
+			<os:value><![CDATA[#[output application/json --- {
+	processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	correlationId: correlationId,
+	status: "PROCESSED"
+}]]]></os:value>
+		</os:store>
+		<logger level="DEBUG" doc:name="Log Message Stored" message="#[output application/json --- {correlationId: correlationId, action: 'MESSAGE_ID_STORED', idempotencyKey: vars.idempotencyKey, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Check if Message Was Previously Processed -->
+	<sub-flow name="check-duplicate-message-subflow" doc:name="Check Duplicate Message Subflow">
+		<os:contains key="#[vars.idempotencyKey]" objectStore="Idempotency_Object_Store" doc:name="Check If Exists" target="isDuplicate"/>
+		
+		<choice doc:name="Is Duplicate?">
+			<when expression="#[vars.isDuplicate]">
+				<logger level="WARN" doc:name="Log Duplicate Detected" message="#[output application/json --- {correlationId: correlationId, action: 'DUPLICATE_DETECTED', idempotencyKey: vars.idempotencyKey, timestamp: now()}]"/>
+				<raise-error type="APP:DUPLICATE_MESSAGE" description="#['Duplicate message detected: ' ++ vars.idempotencyKey]"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Not Duplicate" message="#[output application/json --- {correlationId: correlationId, action: 'NOT_DUPLICATE', idempotencyKey: vars.idempotencyKey, timestamp: now()}]"/>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- Remove Processed Message (for replay scenarios) -->
+	<sub-flow name="remove-processed-message-subflow" doc:name="Remove Processed Message Subflow">
+		<os:remove key="#[vars.idempotencyKey]" objectStore="Idempotency_Object_Store" doc:name="Remove Message ID"/>
+		<logger level="INFO" doc:name="Log Message Removed" message="#[output application/json --- {correlationId: correlationId, action: 'MESSAGE_ID_REMOVED', idempotencyKey: vars.idempotencyKey, timestamp: now()}]"/>
+	</sub-flow>
+
+</mule>

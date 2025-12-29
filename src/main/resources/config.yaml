@@ -1,0 +1,60 @@
+# WMS-ERP Bidirectional Process API Configuration
+# Environment: ${mule.env}
+
+api:
+  id: "${api.id}"
+  version: "v1"
+  basePath: "/api/v1/wms-erp"
+
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8081"
+    basePath: "/api/v1/wms-erp"
+  request:
+    responseTimeout: "30000"
+    connectionIdleTimeout: "60000"
+
+erp:
+  host: "erp-api.example.com"
+  port: "443"
+  basePath: "/api/v1"
+  protocol: "HTTPS"
+  connectionTimeout: "30000"
+  responseTimeout: "60000"
+
+wms:
+  host: "wms-api.example.com"
+  port: "443"
+  basePath: "/api/v1"
+  protocol: "HTTPS"
+  connectionTimeout: "30000"
+  responseTimeout: "60000"
+
+objectstore:
+  idempotency:
+    entryTtl: "24"
+    entryTtlUnit: "HOURS"
+    maxEntries: "10000"
+  batch:
+    entryTtl: "72"
+    entryTtlUnit: "HOURS"
+    maxEntries: "50000"
+
+batch:
+  inventoryReconciliation:
+    schedulerFrequency: "3600000"
+    batchSize: "100"
+    maxFailedRecords: "-1"
+  shipmentReplay:
+    schedulerFrequency: "1800000"
+    batchSize: "50"
+    maxFailedRecords: "-1"
+
+retry:
+  maxRetries: "3"
+  retryInterval: "5000"
+
+logging:
+  level: "INFO"
+  maskFields: "client_secret,password,token,authorization"

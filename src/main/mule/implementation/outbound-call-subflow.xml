@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Outbound Call Subflows for ERP and WMS Systems -->
+
+	<!-- Send to WMS System -->
+	<sub-flow name="send-to-wms-subflow" doc:name="Send to WMS Subflow">
+		<logger level="INFO" doc:name="Log WMS Call Start" message="#[output application/json --- {correlationId: correlationId, action: 'WMS_CALL_START', endpoint: '${wms.basePath}/orders', timestamp: now()}]"/>
+		
+		<!-- Retry wrapper for resilience -->
+		<until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.retryInterval}" doc:name="Retry WMS Call">
+			<http:request method="POST" config-ref="HTTP_Request_Config_WMS" path="${wms.basePath}/orders" doc:name="POST to WMS">
+				<http:headers><![CDATA[#[output application/java
+---
+{
+	"Content-Type": "application/json",
+	"X-Correlation-ID": correlationId,
+	"X-Source-System": "ERP-INTEGRATION",
+	"client_id": p('secure::wms.credentials.clientId'),
+	"client_secret": p('secure::wms.credentials.clientSecret')
+}]]]></http:headers>
+			</http:request>
+		</until-successful>
+		
+		<set-variable variableName="wmsResponse" value="#[payload]" doc:name="Store WMS Response"/>
+		<logger level="INFO" doc:name="Log WMS Call Complete" message="#[output application/json --- {correlationId: correlationId, action: 'WMS_CALL_COMPLETE', responseStatus: attributes.statusCode, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Send to ERP System -->
+	<sub-flow name="send-to-erp-subflow" doc:name="Send to ERP Subflow">
+		<logger level="INFO" doc:name="Log ERP Call Start" message="#[output application/json --- {correlationId: correlationId, action: 'ERP_CALL_START', transactionType: payload.transactionType default 'UNKNOWN', timestamp: now()}]"/>
+		
+		<!-- Determine ERP endpoint based on transaction type -->
+		<set-variable variableName="erpEndpoint" doc:name="Set ERP Endpoint" value="#[payload.transactionType match {
+	case 'INVENTORY_UPDATE' -> '${erp.basePath}/inventory'
+	case 'SHIPMENT_CONFIRMATION' -> '${erp.basePath}/shipments'
+	case 'PICKING_STATUS' -> '${erp.basePath}/picking'
+	else -> '${erp.basePath}/transactions'
+}]"/>
+		
+		<!-- Retry wrapper for resilience -->
+		<until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.retryInterval}" doc:name="Retry ERP Call">
+			<http:request method="POST" config-ref="HTTP_Request_Config_ERP" path="#[vars.erpEndpoint]" doc:name="POST to ERP">
+				<http:headers><![CDATA[#[output application/java
+---
+{
+	"Content-Type": "application/json",
+	"X-Correlation-ID": correlationId,
+	"X-Source-System": "WMS-INTEGRATION",
+	"client_id": p('secure::erp.credentials.clientId'),
+	"client_secret": p('secure::erp.credentials.clientSecret')
+}]]]></http:headers>
+			</http:request>
+		</until-successful>
+		
+		<set-variable variableName="erpResponse" value="#[payload]" doc:name="Store ERP Response"/>
+		<logger level="INFO" doc:name="Log ERP Call Complete" message="#[output application/json --- {correlationId: correlationId, action: 'ERP_CALL_COMPLETE', responseStatus: attributes.statusCode, timestamp: now()}]"/>
+	</sub-flow>
+
+	<!-- Generic HTTP Call with Retry -->
+	<sub-flow name="http-call-with-retry-subflow" doc:name="HTTP Call with Retry Subflow">
+		<logger level="DEBUG" doc:name="Log HTTP Call Start" message="#[output application/json --- {correlationId: correlationId, action: 'HTTP_CALL_START', method: vars.httpMethod, path: vars.httpPath, timestamp: now()}]"/>
+		
+		<until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.retryInterval}" doc:name="Retry HTTP Call">
+			<http:request method="#[vars.httpMethod]" config-ref="#[vars.httpConfigRef]" path="#[vars.httpPath]" doc:name="HTTP Request">
+				<http:headers><![CDATA[#[vars.httpHeaders default {}]]]></http:headers>
+				<http:query-params><![CDATA[#[vars.httpQueryParams default {}]]]></http:query-params>
+			</http:request>
+		</until-successful>
+		
+		<logger level="DEBUG" doc:name="Log HTTP Call Complete" message="#[output application/json --- {correlationId: correlationId, action: 'HTTP_CALL_COMPLETE', statusCode: attributes.statusCode, timestamp: now()}]"/>
+	</sub-flow>
+
+</mule>

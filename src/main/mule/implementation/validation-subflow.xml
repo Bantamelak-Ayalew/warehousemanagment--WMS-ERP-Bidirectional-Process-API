@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Validation Subflows for All Message Types -->
+
+	<!-- Validate Purchase Order -->
+	<sub-flow name="validate-purchase-order-subflow" doc:name="Validate Purchase Order Subflow">
+		<logger level="DEBUG" doc:name="Log Validation Start" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_PO_START', timestamp: now()}]"/>
+		
+		<!-- Validate Required Fields -->
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.poNumber)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Purchase Order Number is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.supplierId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Supplier ID is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.warehouseId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Warehouse ID is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.items) or sizeOf(payload.items default []) == 0]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Purchase Order must contain at least one item"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Validation Passed" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_PO_PASSED', poNumber: payload.poNumber, timestamp: now()}]"/>
+			</otherwise>
+		</choice>
+		
+		<!-- Validate Items -->
+		<foreach collection="#[payload.items]" doc:name="Validate Each Item">
+			<choice doc:name="Validate Item Fields">
+				<when expression="#[isEmpty(payload.sku)]">
+					<raise-error type="APP:VALIDATION_ERROR" description="SKU is required for all items"/>
+				</when>
+				<when expression="#[payload.quantity == null or payload.quantity &lt;= 0]">
+					<raise-error type="APP:VALIDATION_ERROR" description="Quantity must be greater than zero"/>
+				</when>
+				<otherwise>
+					<logger level="TRACE" doc:name="Item Valid" message="Item validated: #[payload.sku]"/>
+				</otherwise>
+			</choice>
+		</foreach>
+		
+		<!-- Restore original payload after foreach -->
+		<set-payload value="#[vars.originalPayload]" doc:name="Restore Original Payload"/>
+	</sub-flow>
+
+	<!-- Validate Inventory Update -->
+	<sub-flow name="validate-inventory-update-subflow" doc:name="Validate Inventory Update Subflow">
+		<logger level="DEBUG" doc:name="Log Validation Start" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_INV_START', timestamp: now()}]"/>
+		
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.warehouseId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Warehouse ID is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.sku)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="SKU is required"/>
+			</when>
+			<when expression="#[payload.quantityAvailable == null or payload.quantityAvailable &lt; 0]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Quantity Available must be zero or greater"/>
+			</when>
+			<when expression="#[payload.quantityReserved == null or payload.quantityReserved &lt; 0]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Quantity Reserved must be zero or greater"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Validation Passed" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_INV_PASSED', warehouseId: payload.warehouseId, sku: payload.sku, timestamp: now()}]"/>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- Validate Shipment Confirmation -->
+	<sub-flow name="validate-shipment-confirmation-subflow" doc:name="Validate Shipment Confirmation Subflow">
+		<logger level="DEBUG" doc:name="Log Validation Start" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_SHIP_START', timestamp: now()}]"/>
+		
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.shipmentId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Shipment ID is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.poNumber)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="PO Number is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.carrier)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Carrier is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.items) or sizeOf(payload.items default []) == 0]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Shipment must contain at least one item"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Validation Passed" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_SHIP_PASSED', shipmentId: payload.shipmentId, timestamp: now()}]"/>
+			</otherwise>
+		</choice>
+		
+		<!-- Validate Items -->
+		<foreach collection="#[payload.items]" doc:name="Validate Each Item">
+			<choice doc:name="Validate Item Fields">
+				<when expression="#[isEmpty(payload.sku)]">
+					<raise-error type="APP:VALIDATION_ERROR" description="SKU is required for all shipment items"/>
+				</when>
+				<when expression="#[payload.quantityShipped == null or payload.quantityShipped &lt;= 0]">
+					<raise-error type="APP:VALIDATION_ERROR" description="Quantity Shipped must be greater than zero"/>
+				</when>
+				<otherwise>
+					<logger level="TRACE" doc:name="Item Valid" message="Shipment item validated: #[payload.sku]"/>
+				</otherwise>
+			</choice>
+		</foreach>
+		
+		<!-- Restore original payload after foreach -->
+		<set-payload value="#[vars.originalPayload]" doc:name="Restore Original Payload"/>
+	</sub-flow>
+
+	<!-- Validate Picking Status -->
+	<sub-flow name="validate-picking-status-subflow" doc:name="Validate Picking Status Subflow">
+		<logger level="DEBUG" doc:name="Log Validation Start" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_PICK_START', timestamp: now()}]"/>
+		
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.pickId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Pick ID is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.warehouseId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Warehouse ID is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.poNumber)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="PO Number is required"/>
+			</when>
+			<when expression="#[isEmpty(payload.status)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Status is required"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Validation Passed" message="#[output application/json --- {correlationId: correlationId, action: 'VALIDATE_PICK_PASSED', pickId: payload.pickId, status: payload.status, timestamp: now()}]"/>
+			</otherwise>
+		</choice>
+		
+		<!-- Validate Status Values -->
+		<choice doc:name="Validate Status Value">
+			<when expression="#[!(['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'ON_HOLD'] contains upper(payload.status))]">
+				<raise-error type="APP:VALIDATION_ERROR" description="Invalid status value. Must be one of: PENDING, IN_PROGRESS, COMPLETED, CANCELLED, ON_HOLD"/>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Status Valid" message="Status value validated: #[payload.status]"/>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+</mule>

@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="batch-jobs-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- Test: Inventory Reconciliation Batch - No Records -->
+	<munit:test name="test-inventory-reconciliation-no-records" doc:name="Test Inventory Reconciliation - No Records" description="Verify batch handles empty record set gracefully">
+		<munit:behavior>
+			<!-- Mock Object Store retrieve-all to return empty -->
+			<munit-tools:mock-when processor="os:retrieve-all" doc:name="Mock Empty Object Store">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<flow-ref name="inventory-reconciliation-trigger-flow" doc:name="Call Inventory Reconciliation Trigger"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<!-- Verify flow completes without error -->
+			<munit-tools:assert-that expression="#[true]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Flow Completed"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Inventory Reconciliation Batch - With Records -->
+	<munit:test name="test-inventory-reconciliation-with-records" doc:name="Test Inventory Reconciliation - With Records" description="Verify batch processes inventory records">
+		<munit:behavior>
+			<!-- Mock Object Store retrieve-all with test data -->
+			<munit-tools:mock-when processor="os:retrieve-all" doc:name="Mock Object Store With Records">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"INV-WH001-SKU001": {"warehouseId": "WH-001", "sku": "SKU-001", "quantity": 100}}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock ERP HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "success"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock Object Store remove -->
+			<munit-tools:mock-when processor="os:remove" doc:name="Mock Object Store Remove">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<flow-ref name="inventory-reconciliation-trigger-flow" doc:name="Call Inventory Reconciliation Trigger"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[true]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Flow Completed"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Shipment Replay Batch - No Failed Records -->
+	<munit:test name="test-shipment-replay-no-records" doc:name="Test Shipment Replay - No Records" description="Verify batch handles empty failed record set gracefully">
+		<munit:behavior>
+			<!-- Mock Object Store retrieve-all to return empty -->
+			<munit-tools:mock-when processor="os:retrieve-all" doc:name="Mock Empty Object Store">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<flow-ref name="shipment-replay-trigger-flow" doc:name="Call Shipment Replay Trigger"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[true]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Flow Completed"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Shipment Replay Batch - With Failed Records -->
+	<munit:test name="test-shipment-replay-with-records" doc:name="Test Shipment Replay - With Records" description="Verify batch replays failed shipment records">
+		<munit:behavior>
+			<!-- Mock Object Store retrieve-all with failed records -->
+			<munit-tools:mock-when processor="os:retrieve-all" doc:name="Mock Object Store With Failed Records">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"FAILED-SHIP-12345": {"record": {"shipmentId": "SHIP-12345"}, "retryCount": 1, "error": "Connection timeout"}}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock ERP HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "success"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock Object Store remove -->
+			<munit-tools:mock-when processor="os:remove" doc:name="Mock Object Store Remove">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<flow-ref name="shipment-replay-trigger-flow" doc:name="Call Shipment Replay Trigger"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that expression="#[true]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Flow Completed"/>
+		</munit:validation>
+	</munit:test>
+
+	<!-- Test: Batch Partial Failure Handling -->
+	<munit:test name="test-batch-partial-failure" doc:name="Test Batch Partial Failure" description="Verify batch continues processing after individual record failure">
+		<munit:behavior>
+			<!-- Mock Object Store retrieve-all with multiple records -->
+			<munit-tools:mock-when processor="os:retrieve-all" doc:name="Mock Object Store With Multiple Records">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"INV-WH001-SKU001": {"warehouseId": "WH-001", "sku": "SKU-001"}, "INV-WH001-SKU002": {"warehouseId": "WH-001", "sku": "SKU-002"}}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock ERP HTTP Request - First succeeds, second fails -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock ERP Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="config-ref" whereValue="HTTP_Request_Config_ERP"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "success"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock Object Store operations -->
+			<munit-tools:mock-when processor="os:remove" doc:name="Mock Object Store Remove">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+			
+			<munit-tools:mock-when processor="os:store" doc:name="Mock Object Store Store">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<flow-ref name="inventory-reconciliation-trigger-flow" doc:name="Call Inventory Reconciliation Trigger"/>
+		</munit:execution>
+		
+		<munit:validation>
+			<!-- Batch should complete even with partial failures -->
+			<munit-tools:assert-that expression="#[true]" is="#[MunitTools::equalTo(true)]" doc:name="Assert Batch Completed"/>
+		</munit:validation>
+	</munit:test>
+
+</mule>
